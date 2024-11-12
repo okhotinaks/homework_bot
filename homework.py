@@ -6,6 +6,9 @@ import sys
 
 from dotenv import load_dotenv
 from telebot import TeleBot
+from telebot.apihelper import ApiException
+
+from exceptions import APIError
 
 load_dotenv()
 
@@ -43,10 +46,14 @@ def check_tokens():
         'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
         'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
     }
-    for name, value in variables.items():
-        if value is None:
-            logger.critical(f'Отсутствует переменная окружения: {name}')
-            return False
+    missing_variables = [
+        name for name, value in variables.items() if value is None
+    ]
+
+    if missing_variables:
+        missing_vars = ', '.join(missing_variables)
+        logger.critical(f'Отсутствуют переменные окружения: {missing_vars}')
+        return False
     return True
 
 
@@ -55,12 +62,10 @@ def send_message(bot, message):
     try:
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         logger.debug('Сообщение отправлено в Telegram')
-    except Exception:
-        logger.error('Сбой при отправке сообщения в Telegram')
-
-
-class APIError(Exception):
-    """Исключение для ошибок запроса к API и обработки ответа."""
+        return True
+    except ApiException as error:
+        logger.error(f'Сбой при отправке сообщения в Telegram: {error}')
+        return False
 
 
 def get_api_answer(timestamp):
@@ -72,12 +77,9 @@ def get_api_answer(timestamp):
         raise APIError(f'Ошибка при запросе к API: {error}')
 
     if response.status_code != 200:
-        raise APIError(f'Код ответа API {response.status_code}')
+        raise RuntimeError(f'Код ответа API {response.status_code}')
 
-    try:
-        return response.json()
-    except ValueError as value_error:
-        raise APIError(f'Ошибка при обработке JSON: {value_error}')
+    return response.json()
 
 
 def check_response(response):
@@ -141,6 +143,12 @@ def main():
                     send_message(bot, message)
                     last_message = message
             timestamp = response.get('current_date', timestamp)
+        except requests.RequestException as error:
+            logger.error(f'Ошибка при запросе к API: {error}')
+            send_message(bot, f'Ошибка при запросе к API: {error}')
+        except ValueError as value_error:
+            logger.error(f'Ошибка при обработке JSON: {value_error}')
+            send_message(bot, f'Ошибка при обработке JSON: {value_error}')
         except Exception as error:
             logger.error(f'Сбой в работе программы: {error}')
             message = f'Сбой в работе программы: {error}'
